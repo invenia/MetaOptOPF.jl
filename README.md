@@ -15,5 +15,5 @@ early stopping with `update!(opt, ps, gs)`
 * Following this we then optimize, from this initialization, subject to the metaloss: `res = optimize(_metaloss, GoCompetition.get_w(model), ParticleSwarm...`. Here for example `_metaloss` is a function that returns the metaloss, and is passed into the optimizer. `get_w` gets the weights of the NN, and `ParticleSwarm` refers to the optimizer, etc.
 
 Branches:
-master: DC-OPF
-ac-opf: AC-OPF
+* master: DC-OPF
+* ac-opf: AC-OPF
