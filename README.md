@@ -1,1 +1,2 @@
-Holding repo for the code for https://arxiv.org/abs/1911.06784
+This package defines the necessary functions to run the experiments in https://arxiv.org/abs/1911.06784.
+
