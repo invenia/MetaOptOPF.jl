@@ -1,12 +1,6 @@
 using Flux.Tracker: update!, gradient
 
 get_w(model) = convert(Array{Float64}, vcat(map(x -> vec(x.data), Flux.params(model))...))
-
-""" set_w!(model, w)
-
-Takes a neural network `model` and weights w and sets the parameters of model to w.
-
-"""
 function set_w!(model, w)
     sizes = map(x -> size(x), Flux.params(model))
     nelem = map(x -> prod(x), sizes)
@@ -19,14 +13,13 @@ function set_w!(model, w)
     Flux.loadparams!(model, ps)
 end
 
-# Helper function
 function popfirstn!(x, k)
     popped = x[1 : k]
     deleteat!(x, 1:k)
     return popped
 end
 
-# Helper function to return a neural network based on some default heuristics.
+
 function NNmodel(N_in::Int, N_out::Int)
   a1 = N_in
   a2 = 10
@@ -47,8 +40,6 @@ function NeuralNetConstructor(insize, outsize; hidden_sizes, act=relu, fact=sigm
     push!(layers, Dense(hidden_sizes[end], outsize, fact))  #final linear layer
     return Chain(layers...)
 end
-
-
 
 function metaloss(w, model, pm, data; solver::Solver = VerboseSolver())
     mdl = deepcopy(model)
@@ -89,7 +80,7 @@ function metaloss(
         set_x!(_network, d[1])
         _c0 = predict(mdl, transform(d[1]), t, nn_threshold=nn_threshold)
         _b0 = deepcopy(b0)
-        classifier2binding!(_b0, _c0, n_gen_lb=length(_network["gen"]))
+        classifier2binding!(_b0, _c0, n_gen=length(_network["gen"]), n_bus=length(_network["bus"]))
         obj = objective_extend!(_network, _b0, n=n)
          # Leave this commented for now. Can always add back in or add a debug mode
         #@show obj[obj_quantity]
@@ -137,7 +128,7 @@ function objective(
 
     n <= 0 && error("n must be greater than 0!")
     setting = Dict("output" => Dict("branch_flows" => true))
-    power_model = build_model(network, DCPPowerModel, PowerModels.post_opf, setting=setting)
+    power_model = build_model(network, ACPPowerModel, PowerModels.post_opf, setting=setting)
     remove_nonbinding_constraints!(power_model, binding_status)
     opf_result, ni, ct = solver(s -> optimize_model!(power_model, s))
     st = opf_result["solve_time"]
@@ -155,7 +146,7 @@ function objective(
     while cfunc(deepcopy(network), opf_result, binding_status, threshold=threshold) > 0
         siter += 1
         # warmstart!(network, opf_result["solution"])
-        power_model = build_model(network, DCPPowerModel, PowerModels.post_opf, setting=setting)
+        power_model = build_model(network, ACPPowerModel, PowerModels.post_opf, setting=setting)
         remove_nonbinding_constraints!(power_model, binding_status)
         opf_result, ni, ct = solver(s -> optimize_model!(power_model, s))
         st = opf_result["solve_time"]
@@ -205,7 +196,7 @@ function run(
     )
 
     setting = Dict("output" => Dict("branch_flows" => true))
-    pm_model = build_model(network, DCPPowerModel, PowerModels.post_opf, setting=setting)
+    pm_model = build_model(network, ACPPowerModel, PowerModels.post_opf, setting=setting)
 
     size_in = size(data_train[1][1], 1)
     size_out = GoCompetition.totalconstraints(pm_model.model)

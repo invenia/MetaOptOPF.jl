@@ -52,11 +52,20 @@ function get_x(power_model::Dict)
     for (i, load) in sort(power_model["load"])
         push!(x, load["pd"])
     end
+    for (i, load) in sort(power_model["load"])
+        push!(x, load["qd"])
+    end
     for (i, gen) in sort(power_model["gen"])
         push!(x, gen["pmax"])
     end
+    for (i, gen) in sort(power_model["gen"])
+        push!(x, gen["qmax"])
+    end
     for (i, branch) in sort(power_model["branch"])
         push!(x, branch["br_x"])
+    end
+    for (i, branch) in sort(power_model["branch"])
+        push!(x, branch["br_r"])
     end
     for (i, branch) in sort(power_model["branch"])
         push!(x, branch["rate_a"])
@@ -75,7 +84,12 @@ function set_x!(power_model::Dict, cases_row::Dict)
     k = 0
     for (i, load) in sort(power_model["load"])
         k += 1
-        load["pd"] = cases_row["price_insensitive_load"][k]
+        load["pd"] = cases_row["price_insensitive_pload"][k]
+    end
+    k = 0
+    for (i, load) in sort(power_model["load"])
+        k += 1
+        load["qd"] = cases_row["price_insensitive_qload"][k]
     end
     k = 0
     for (i, gen) in sort(power_model["gen"])
@@ -83,9 +97,19 @@ function set_x!(power_model::Dict, cases_row::Dict)
         gen["pmax"] = cases_row["pg_max"][k]
     end
     k = 0
+    for (i, gen) in sort(power_model["gen"])
+        k += 1
+        gen["qmax"] = cases_row["qg_max"][k]
+    end
+    k = 0
     for (i, branch) in sort(power_model["branch"])
         k += 1
         branch["br_x"] = cases_row["br_x"][k]
+    end
+    k = 0
+    for (i, branch) in sort(power_model["branch"])
+        k += 1
+        branch["br_r"] = cases_row["br_r"][k]
     end
     k = 0
     for (i, branch) in sort(power_model["branch"])
@@ -108,13 +132,25 @@ function set_x!(data::Dict, x::Vector)
         k += 1
         load["pd"] = x[k]
     end
+    for (i, load) in sort(data["load"])
+        k += 1
+        load["qd"] = x[k]
+    end
     for (i, gen) in sort(data["gen"])
         k += 1
         gen["pmax"] = x[k]
     end
+    for (i, gen) in sort(data["gen"])
+        k += 1
+        gen["qmax"] = x[k]
+    end
     for (i, branch) in sort(data["branch"])
         k += 1
         branch["br_x"] = x[k]
+    end
+    for (i, branch) in sort(data["branch"])
+        k += 1
+        branch["br_r"] = x[k]
     end
     for (i, branch) in sort(data["branch"])
         k += 1
@@ -174,7 +210,7 @@ function case_to_data(Cases::AbstractArray; t = Primal)
     flag_case = []
     for j in 1:size(Cases, 1)
         if is_solved(Cases[j]["OPF_output"]["termination_status"])
-            x = vcat(Cases[j]["price_insensitive_load"], Cases[j]["pg_max"], Cases[j]["br_x"], Cases[j]["rate_a"])
+            x = vcat(Cases[j]["price_insensitive_pload"], Cases[j]["price_insensitive_qload"], Cases[j]["pg_max"], Cases[j]["qg_max"], Cases[j]["br_x"], Cases[j]["br_r"],Cases[j]["rate_a"])
             y = target(t, Cases[j])
             append!(flag_case, j)
             push!(OPF_data, [x, y])
@@ -197,21 +233,34 @@ end
 function warmstart!(network::Dict, solution)
     for bus in keys(solution["bus"])
       network["bus"][bus]["va_start"] = solution["bus"][bus]["va"]
+      network["bus"][bus]["vm_start"] = solution["bus"][bus]["vm"]
     end
     for branch in keys(solution["branch"])
       network["branch"][branch]["pf_start"] = solution["branch"][branch]["pf"]
+      network["branch"][branch]["pt_start"] = solution["branch"][branch]["pt"]
+      network["branch"][branch]["qf_start"] = solution["branch"][branch]["qf"]
+      network["branch"][branch]["qt_start"] = solution["branch"][branch]["qt"]
     end
     for gen in keys(solution["gen"])
       network["gen"][gen]["pg_start"] = solution["gen"][gen]["pg"]
+      network["gen"][gen]["qg_start"] = solution["gen"][gen]["qg"]
     end
 end
 
 function unbind!(network::Dict)
+    for bus in keys(network["bus"])
+        network["bus"][bus]["vmin"] = -999
+        network["bus"][bus]["vmax"] = 999
+    end
     for gen in keys(network["gen"])
         network["gen"][gen]["pmin"] = -999
         network["gen"][gen]["pmax"] = 999
+        network["gen"][gen]["qmin"] = -999
+        network["gen"][gen]["qmax"] = 999
     end
     for branch in keys(network["branch"])
         network["branch"][branch]["rate_a"] = 9999
+        network["branch"][branch]["angmin"] = -3.14
+        network["branch"][branch]["angmax"] = 3.14
     end
 end

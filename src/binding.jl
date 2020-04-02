@@ -4,12 +4,14 @@ export verify_binding_status, verify_violation_status
 
 
 
-DC_REL_CONSTRAINT_TYPES = [
+AC_REL_CONSTRAINT_TYPES = [
     (VariableRef, MathOptInterface.GreaterThan{Float64})
     (VariableRef, MathOptInterface.LessThan{Float64})
-    #(GenericAffExpr{Float64,VariableRef}, MathOptInterface.EqualTo{Float64})
     (GenericAffExpr{Float64,VariableRef}, MathOptInterface.GreaterThan{Float64})
     (GenericAffExpr{Float64,VariableRef}, MathOptInterface.LessThan{Float64})
+    #(GenericAffExpr{Float64,VariableRef}, MathOptInterface.EqualTo{Float64})
+    (GenericQuadExpr{Float64,VariableRef}, MathOptInterface.LessThan{Float64})
+    #(GenericQuadExpr{Float64,VariableRef}, MathOptInterface.EqualTo{Float64})
 ]
 
 """
@@ -39,9 +41,9 @@ function get_binding_status(model::Model; threshold::Float64=1.0e-5)
             rhs = map(si -> getproperty(si, fieldnames(typeof(si))[1]), s)
             diff = lhs - rhs
             if constraint_type[2] == MOI.GreaterThan{Float64}
-                diff = map(d -> d < 0.0 ? 0.0 : abs(d), diff)  # violation is considered as binding
+                diff = map(d -> d < 0.0 ? 0.0 : abs(d), diff)
             else
-                diff = map(d -> d > 0.0 ? 0.0 : abs(d), diff)  # violation is considered as binding
+                diff = map(d -> d > 0.0 ? 0.0 : abs(d), diff)
             end
             binding_status[constraint_type][diff .> threshold] .= false
         end
@@ -57,18 +59,21 @@ function get_binding_status(model_left::Model, model_right::Model; threshold::Fl
         if constraint_type[2] == MOI.EqualTo{Float64}
             continue  # equality constraints are always binding
         else
-            c_left = all_constraints(model_left, constraint_type...)
-            c_right = all_constraints(model_right, constraint_type...)
-            s_right = map(ci -> constraint_object(ci).set, c_right)
-            lhs = value.(c_left)
-            rhs = map(si -> getproperty(si, fieldnames(typeof(si))[1]), s_right)
-            diff = lhs - rhs
-            if constraint_type[2] == MOI.GreaterThan{Float64}
-                diff = map(d -> d < 0.0 ? 0.0 : abs(d), diff)  # violation is considered as binding
-            else
-                diff = map(d -> d > 0.0 ? 0.0 : abs(d), diff)  # violation is considered as binding
+            for i=1:num_constraints(model_left, constraint_type...)
+                c_left = all_constraints(model_left, constraint_type...)[i]
+                c_right = all_constraints(model_right, constraint_type...)[i]
+                s_right = constraint_object(c_right).set
+                lhs = value(c_left)
+                rhs = getproperty(s_right, fieldnames(typeof(s_right))[1])
+                diff = if constraint_type[2] == MOI.GreaterThan{Float64}
+                    lhs < rhs ? 0.0 : abs(lhs - rhs)  # violation is considered as binding
+                else
+                    lhs > rhs ? 0.0 : abs(lhs - rhs)  # violation is considered as binding
+                end
+                if diff > threshold
+                    binding_status[constraint_type][i] = false
+                end
             end
-            binding_status[constraint_type][diff .> threshold] .= false
         end
     end
     return binding_status
@@ -116,17 +121,20 @@ function get_violation_status(model::Model; threshold::Float64=1.0e-5)
         if constraint_type[2] == MOI.EqualTo{Float64}
             continue  # equality constraints are always present so never violated
         else
-            c = all_constraints(model, constraint_type...)
-            s = map(ci -> constraint_object(ci).set, c)
-            lhs = value.(c)
-            rhs = map(si -> getproperty(si, fieldnames(typeof(si))[1]), s)
-            diff = lhs - rhs
-            if constraint_type[2] == MOI.GreaterThan{Float64}
-                diff = map(d -> d > 0.0 ? 0.0 : abs(d), diff)
-            else
-                diff = map(d -> d < 0.0 ? 0.0 : abs(d), diff)
+            for i=1:num_constraints(model, constraint_type...)
+                c = all_constraints(model, constraint_type...)[i]
+                s = constraint_object(c).set
+                lhs = value(c)
+                rhs = getproperty(s, fieldnames(typeof(s))[1])
+                diff = if constraint_type[2] == MOI.GreaterThan{Float64}
+                    lhs > rhs ? 0.0 : abs(lhs - rhs)
+                else
+                    lhs < rhs ? 0.0 : abs(lhs - rhs)
+                end
+                if diff > threshold
+                    violation_status[constraint_type][i] = true
+                end
             end
-            violation_status[constraint_type][diff .> threshold] .= true
         end
     end
     return violation_status
@@ -251,10 +259,10 @@ end
 function verify_binding_status(network::Dict, solution, threshold)
     _network = deepcopy(network)
     warmstart!(_network, solution)
-    full_power_model_right = build_model(_network, DCPPowerModel, PowerModels.post_opf)
+    full_power_model_right = build_model(_network, ACPPowerModel, PowerModels.post_opf)
 #   full_opf_result_right = optimize_model!(full_power_model_right, JuMP.with_optimizer(Ipopt.Optimizer, max_iter=0, print_level=0))
     unbind!(_network)
-    full_power_model_left = build_model(_network, DCPPowerModel, PowerModels.post_opf)
+    full_power_model_left = build_model(_network, ACPPowerModel, PowerModels.post_opf)
     full_opf_result_left = optimize_model!(full_power_model_left, JuMP.with_optimizer(Ipopt.Optimizer, max_iter=0, print_level=0))
     return get_binding_status(full_power_model_left, full_power_model_right, threshold=threshold)
 end
@@ -262,46 +270,27 @@ end
 function verify_violation_status(network::Dict, solution, threshold)
     _network = deepcopy(network)
     warmstart!(_network, solution)
-    full_power_model = build_model(_network, DCPPowerModel, PowerModels.post_opf)
+    full_power_model = build_model(_network, ACPPowerModel, PowerModels.post_opf)
     full_opf_result = optimize_model!(full_power_model, JuMP.with_optimizer(Ipopt.Optimizer, max_iter=0, print_level=0))
     return get_violation_status(full_power_model, threshold=threshold)
 end
 
-relconstrainttypes(m) = filter(x -> x in DC_REL_CONSTRAINT_TYPES, list_of_constraint_types(m))
+relconstrainttypes(m) = filter(x -> x in AC_REL_CONSTRAINT_TYPES, list_of_constraint_types(m))
 totalconstraints(m) = sum(map(relconstrainttypes(m)) do (x) num_constraints(m, x...) end)
 ntconstraints(m) = map(relconstrainttypes(m)) do (x); (ct=(x[1], x[2]), N=num_constraints(m, x...)) end
 
-
-""" classifier2binding(b::Dict, c::T; n_gen_lb=0)
-
-Takes in a dict `b` of the form REL_CONSTRAINT_TYPES for keys with values
-    as vectors being the associated binding status, and a classifier output `c`.
-    For each key in `b`, converts the appropriate values to the binding status represented
-    by c.
-
-Essentially, the classifier outputs a vector of binding status as a Bool. This function
-converts this into a `Dict` of the form used elsewhere.
-
-"""
-function classifier2binding!(b::Dict, c::T; n_gen_lb=0)  where {T<:AbstractArray{Bool}}
+function classifier2binding!(b::Dict, c::T; n_gen=0, n_bus=0)  where {T<:AbstractArray{Bool}}
     k = 0
-    for constraint_type in GoCompetition.DC_REL_CONSTRAINT_TYPES
+    for constraint_type in GoCompetition.AC_REL_CONSTRAINT_TYPES
         b[constraint_type][:] = c[k+1:k+length(b[constraint_type])]
-        if constraint_type == DC_REL_CONSTRAINT_TYPES[1]
-            b[constraint_type][1:n_gen_lb] .= true
+        if constraint_type == AC_REL_CONSTRAINT_TYPES[1]
+            b[constraint_type][1:n_bus+n_gen] .= true
+        elseif constraint_type == AC_REL_CONSTRAINT_TYPES[2]
+            b[constraint_type][1:n_bus] .= true
         end
         k += length(b[constraint_type])
     end
 end
 
-""" classifier2binding(b::Dict, c::T; n_gen_lb=0)
-
-Takes in a dict `b` of the form REL_CONSTRAINT_TYPES for keys with values
-    as vectors being the associated binding status.
-
-Returns a Array{Bool} that is equivalent to the classifier output.
-Essentially, the inverse operation of `classifier2binding!`
-
-"""
-binding2classifier(b) = vcat(map(DC_REL_CONSTRAINT_TYPES) do (t) b[t] end ...)
+binding2classifier(b) = vcat(map(AC_REL_CONSTRAINT_TYPES) do (t) b[t] end ...)
 create_bindingdict_template(data::Dict) = deepcopy(data)
