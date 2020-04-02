@@ -6,11 +6,12 @@ makedocs(;
     pages=[
         "Home" => "index.md",
     ],
-    repo="https://gitlab.invenia.ca/invenia/research/GoCompetition.jl/blob/{commit}{path}#L{line}",
+    repo="https://gitlab.invenia.ca/invenia/GoCompetition.jl/blob/{commit}{path}#L{line}",
     sitename="GoCompetition.jl",
     authors="Invenia Technical Computing Corporation",
     assets=[
         "assets/invenia.css",
+        "assets/logo.png",
     ],
     strict=true,
     html_prettyurls=false,

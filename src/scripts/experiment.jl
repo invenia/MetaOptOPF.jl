@@ -14,7 +14,7 @@ using Dates
 using Plots
 using BSON
 
-## ARGUMENT PARSING
+
 @info "Parsing args..."
 s = ArgParseSettings()
 @add_arg_table s begin
@@ -125,8 +125,6 @@ end
   PowerModels.silence()
 end
 
-### MAIN CODE BLOCK
-
 makebatch(batch::Vector{Array{T, N}}) where {T,N} = cat(batch..., dims = ndims(batch) + 1)
 makebatch(x, y) = (makebatch(x), makebatch(GoCompetition.binding2classifier.(y)))
 @everywhere makebatch(batch::Array{T, N}) where {T,N} = reshape(batch, (size(batch)...,1))
@@ -144,29 +142,21 @@ function flushprintln(x...)
     flush(stdout)
 end
 
-# INITIALIZE POWERMODELS
 @info "Building network..."
 network = PowerModels.parse_file(casepath)
-GoCompetition.grid_dcopf_cleanup!(network)
+#GoCompetition.grid_acopf_cleanup!(network)
 
 setting = Dict("output" => Dict("branch_flows" => true))
-pm_model = build_model(network, DCPPowerModel, PowerModels.post_opf, setting=setting);
-
-# LOAD DATA
+pm_model = build_model(network, ACPPowerModel, PowerModels.post_opf, setting=setting);
 
 @eval @load $datapath
 @show(size(data))
-
-# TRANSFORM DATA
 x_orig = GoCompetition.get_x(network)
 x_orig[x_orig .== 0] .= 1.0
 transform = x -> (x - x_orig) ./ x_orig
 batchtransform = batch -> mapslices(transform, batch; dims = 1)
 opt = ADAM(lr)
 
-# Define a function to determine whether the line has executed previously.
-# This is used to control for precompilation times (given that timing is used as part of the
-# cost function, this is important.
 function run_before()
     x = false
     function has_run_before()
@@ -200,7 +190,7 @@ function _main(
 
     data_train, data_validation, data_test = data
 
-    # Model parameters
+    # Model
     ps = Flux.params(model)
 
     # Loss functions
@@ -225,14 +215,9 @@ function _main(
         end
     end
 
-    ## OPTIMIZATION BLOCK
-    # THis is the 'classical' optimization step. It uses a loss function and trains the
-    # NN using standard back prop.
     valX, valY = unzip(data_validation)
     epochs = 0
     l_val = NaN
-
-    # Main training block
     while !do_stop(epochs, l_val)
         trainX, trainY = unzip(shuffleobs(data_train))
         for (batch_X, batch_Y) in eachbatch((trainX, trainY), size = BATCHSIZE)
@@ -258,6 +243,8 @@ function _main(
     model_pre = deepcopy(model)
 
 
+
+
     loss_test = mean(map(b -> _bloss(makebatch(b...)...), eachbatch((testX, testY), size = 1)))
     metaloss_test_pre = GoCompetition.metaloss(GoCompetition.get_w(model), model, network, data_test, x -> makebatch(transform(x)), GoCompetition.ActiveSet; solver = GoCompetition.VerboseSolver(), obj_quantity=:ctime, pool = pool)
     mean_n_active_cnstr_test_pre = mean(map(d -> sum(GoCompetition.predict(model, makebatch(transform(d[1])), GoCompetition.ActiveSet)), data_test))
@@ -268,10 +255,6 @@ function _main(
     flushprintln("$prefix: metaloss_test (pre) = ", metaloss_test_pre)
     flushprintln("$prefix: mean_n_active_cnstr_test (pre) = ", mean_n_active_cnstr_test_pre)
 
-
-    ## METAOPTIMIZATION BLOCK
-    # This is the metaoptimization step. It uses a loss function defined by computation cost
-    # and is trained by Particle Swarm Optimization.
     if !skip_meta
       res = optimize(_metaloss, GoCompetition.get_w(model), ParticleSwarm(n_particles = PSO_P, all_from_init=true, delta=abs.(GoCompetition.get_w(model))), Optim.Options(iterations=PSO_N, show_trace=false, store_trace = true, extended_trace = true, callback = callback))
       model_post = deepcopy(model)
@@ -291,8 +274,6 @@ function _main(
       "$prefix"*"mean_n_active_cnstr_test_post" => mean_n_active_cnstr_test_post
     )
 
-    ## ARCHIVING
-    # Saving and plotting results
     try
 
 
@@ -350,15 +331,22 @@ for n = 1:N
         size_in = size(data_train[1][1], 1)
         size_out = GoCompetition.totalconstraints(pm_model.model)
 
+
+
+
         model1 = Chain(Dense(size_in, 50), BatchNorm(50, relu), Dropout(0.4),
                     Dense(50, 50), BatchNorm(50, relu), Dropout(0.4),
                     Dense(50, size_out, σ))
 
+        model2 = Chain(Dense(size_in, 50, relu), Dropout(0.4),
+                    Dense(50, 50, relu), Dropout(0.4),
+                    Dense(50, size_out, σ))
+
         # Run the function once first to get all precompilation done
         flushprintln("===FULL===")
-        !precompilationcheck() && GoCompetition.metaloss(GoCompetition.get_w(model1), model1, network, data_test[1:10], x -> makebatch(transform(x)), GoCompetition.ActiveSet; solver = GoCompetition.VerboseSolver(), obj_quantity=:ctime, pool = pool)
+        !precompilationcheck() && GoCompetition.metaloss(GoCompetition.get_w(model2), model2, network, data_test, x -> makebatch(transform(x)), GoCompetition.ActiveSet; solver = GoCompetition.VerboseSolver(), obj_quantity=:ctime, pool = pool)
 
-        metaloss_test_full = GoCompetition.metaloss(GoCompetition.get_w(model1), model1, network, data_test, x -> makebatch(transform(x)), GoCompetition.ActiveSet; solver = GoCompetition.VerboseSolver(), obj_quantity=:ctime, pool = pool, nn_threshold=0.0)
+        metaloss_test_full = GoCompetition.metaloss(GoCompetition.get_w(model2), model2, network, data_test, x -> makebatch(transform(x)), GoCompetition.ActiveSet; solver = GoCompetition.VerboseSolver(), obj_quantity=:ctime, pool = pool, nn_threshold=0.0)
         mean_n_active_cnstr_test_full = mean(map(d -> sum(GoCompetition.binding2classifier(d[2])), data_test))
         flushprintln("metaloss_test (full) = ", metaloss_test_full)
         flushprintln("mean_n_active_cnstr_test (full) = ", mean_n_active_cnstr_test_full)
@@ -385,9 +373,20 @@ for n = 1:N
             skip_meta = false,
         )
 
+        flushprintln("===MODEL2===")
+        results2 = _main(
+            model2,
+            (data_train, data_validation, data_test);
+            do_stop = (epochs, l_val) -> epochs < MIN_EPOCHS ? false : true,
+            experiment = n,
+            prefix = "model2",
+            skip_meta = true,
+        )
+
         flushprintln("===RESULTS===")
         flushprintln(results0)
         flushprintln(results1)
+        flushprintln(results2)
         flushprintln("===END OF EXPERIMENT===")
 
     # catch

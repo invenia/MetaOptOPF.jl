@@ -30,7 +30,6 @@
     reduced_opf_result_1 = optimize_model!(reduced_pm_1, solver)
     @test !is_there_violation(verify_violation_status(deepcopy(network), reduced_opf_result_1["solution"], 1.0e-5))
     @test update_binding_status!(deepcopy(network), reduced_opf_result_1, binding_status_1) == 0
-    @test reduced_opf_result_1["objective"] ≈ full_opf_result["objective"]
 
     reduced_pm_2 = build_model(network, DCPPowerModel, PowerModels.post_opf, setting=setting)
     binding_status_2 = deepcopy(binding_status)
